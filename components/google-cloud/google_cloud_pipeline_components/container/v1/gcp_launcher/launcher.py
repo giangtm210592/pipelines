@@ -58,6 +58,8 @@ _JOB_TYPE_TO_ACTION_MAP = {
         bigquery_job_remote_runner.bigquery_query_job,
     'BigqueryCreateModelJob':
         bigquery_job_remote_runner.bigquery_create_model_job,
+    'BigqueryDropModelJob':
+        bigquery_job_remote_runner.bigquery_drop_model_job,
     'BigqueryPredictModelJob':
         bigquery_job_remote_runner.bigquery_predict_model_job,
     'BigqueryExportModelJob':
@@ -147,7 +149,7 @@ def _parse_args(args):
       type=str,
       required=(parsed_args.type in {
           'BigqueryPredictModelJob', 'BigqueryExportModelJob',
-          'BigQueryEvaluateModelJob'
+          'BigQueryEvaluateModelJob', 'BigqueryDropModelJob'
       }),
       default=argparse.SUPPRESS)
   parser.add_argument(

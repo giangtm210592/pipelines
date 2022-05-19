@@ -629,3 +629,79 @@ def bigquery_evaluate_model_job(
           _ARTIFACT_PROPERTY_KEY_ROWS:
               query_results[_ARTIFACT_PROPERTY_KEY_ROWS]
       })
+
+
+def bigquery_drop_model_job(
+    type,
+    project,
+    location,
+    model_name,
+    payload,
+    gcp_resources,
+    executor_input,
+):
+  """Create and poll bigquery drop model job till it reaches a final state.
+
+  This follows the typical launching logic:
+  1. Read if the bigquery job already exists in gcp_resources
+     - If already exists, jump to step 3 and poll the job status. This happens
+     if the launcher container experienced unexpected termination, such as
+     preemption
+  2. Deserialize the payload into the job spec and create the bigquery job
+  3. Poll the bigquery job status every
+  job_remote_runner._POLLING_INTERVAL_IN_SECONDS seconds
+     - If the bigquery job is succeeded, return succeeded
+     - If the bigquery job is pending/running, continue polling the status
+
+  Also retry on ConnectionError up to
+  job_remote_runner._CONNECTION_ERROR_RETRY_LIMIT times during the poll.
+
+
+  Args:
+      type: BigQuery drop model job type.
+      project: Project to run BigQuery drop model job.
+      location: Location of the job to drop the BigQuery model. If not set,
+        default to `US` multi-region. For more details, see
+        https://cloud.google.com/bigquery/docs/locations#specifying_your_location
+      model_name: BigQuery ML model name to drop.
+      payload: A json serialized Job proto. For more details, see
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/Job
+      gcp_resources: File path for storing `gcp_resources` output parameter.
+      executor_input:A json serialized pipeline executor input.
+  """
+  creds, _ = google.auth.default()
+  job_uri = _check_if_job_exists(gcp_resources)
+  if job_uri is None:
+    # Post a job only if no existing job
+    model_name_split = model_name.split('.')
+    if len(model_name_split) != 3:
+      raise ValueError(
+          'The model name must be in the format "projectId.datasetId.modelId"')
+    model_reference = {
+        'projectId': model_name_split[0],
+        'datasetId': model_name_split[1],
+        'modelId': model_name_split[2],
+    }
+
+    model = _get_model(model_reference, creds)
+    if not model or 'modelType' not in model:
+      raise ValueError(
+          'Cannot get model resource. The model name must be in the format "projectId.datasetId.modelId" '
+      )
+
+    job_request_json = json.loads(payload, strict=False)
+
+    job_request_json['configuration']['extract'][
+        'sourceModel'] = model_reference
+
+    if model['modelType'].startswith('BOOSTED_TREE'):
+      # Default format is ML_TF_SAVED_MODEL.
+      job_request_json['configuration']['extract'][
+          'destinationFormat'] = 'ML_XGBOOST_BOOSTER'
+
+    job_uri = _create_job(project, location, job_request_json, creds,
+                          gcp_resources)
+
+  # Poll bigquery job status until finished.
+  job = _poll_job(job_uri, creds)
+  logging.info('Getting query result for job %s', job['id'])
